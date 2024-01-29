@@ -1,0 +1,61 @@
+name: RL Scan w/Docker image
+
+on:
+  workflow_dispatch:
+
+env: # define RLPORTAL_ACCESS_TOKEN as a secret
+  REPORT_PATH: "RLreport"
+  RLPORTAL_SERVER: test
+  RLPORTAL_ORG: Test
+  RLPORTAL_GROUP: Default
+
+jobs:
+  Build-And-Scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+
+      - name: Set Current Date Time
+        run: |
+          echo "DT_NOW=$(date +%Y%m%d-%H%M%S)" >> ${GITHUB_ENV}
+
+      - name: Set up Java
+        uses: actions/setup-java@5ffc13f4174014e2d4d4572b3d74c3fa61aeb2c2 # v3.11.0
+        with:
+          distribution: 'zulu'
+          java-version: '11'
+          cache: 'maven'
+
+      - name: Build
+        run: |
+          mvn -B clean package
+
+      - name: RL scan
+        continue-on-error: true # Remove this line if you want the overall run to fail when the scan detects policy violations
+        env:
+          RLPORTAL_ACCESS_TOKEN: ${{ secrets.RLPORTAL_ACCESS_TOKEN }}
+        run: |
+          mkdir -p $(pwd)/${REPORT_PATH}
+          docker run --pull always --rm \
+            -u $(id -u):$(id -g) \
+            -v "$(pwd)/target:/packages:ro" \
+            -v "$(pwd)/${REPORT_PATH}:/reports" \
+            -e RLPORTAL_ACCESS_TOKEN="${RLPORTAL_ACCESS_TOKEN}" \
+            reversinglabs/rl-scanner-cloud \
+              rl-scan \
+                --rl-portal-server ${RLPORTAL_SERVER} \
+                --rl-portal-org ${RLPORTAL_ORG} \
+                --rl-portal-group ${RLPORTAL_GROUP} \
+                --purl test-project/struts2-showcase@v2.5.28 \
+                --file-path /packages/struts2-showcase.war \
+                --report-path /reports \
+                --report-format all --replace
+
+      - name: Archive Report
+        if: success() || failure()
+        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v3.1.2
+        with:
+          name: ReversingLabs-report-${{ env.DT_NOW }}
+          path: ${{ env.REPORT_PATH }}
